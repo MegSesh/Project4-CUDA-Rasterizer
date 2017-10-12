@@ -64,8 +64,8 @@ namespace {
 		// The attributes listed below might be useful, 
 		// but always feel free to modify on your own
 
-		// glm::vec3 eyePos;	// eye space position used for shading
-		// glm::vec3 eyeNor;
+		 glm::vec3 eyePos;	// eye space position used for shading
+		 glm::vec3 eyeNor;
 		// VertexAttributeTexcoord texcoord0;
 		// TextureData* dev_diffuseTex;
 		// ...
@@ -145,9 +145,17 @@ void render(int w, int h, Fragment *fragmentBuffer, glm::vec3 *framebuffer) {
     int index = x + (y * w);
 
     if (x < w && y < h) {
-        framebuffer[index] = fragmentBuffer[index].color;
+		
+		Fragment currFrag = fragmentBuffer[index];
+
+
+
+		framebuffer[index] = currFrag.color;// glm::dot(currFrag.eyeNor, );// currFrag.color;
 
 		// TODO: add your fragment shader code here
+		//float d = glm::clamp(glm::dot(fragment normal, glm::normalize(lightPos - fragment pos)), 0.0, 1.0);
+		//glm::vec3 
+		//float lambert = glm::clamp(glm::dot(currFrag.eyeNor, glm::normalize(lightPos - currFrag.eyePos)), 0.0f, 1.0f);
 
     }
 }
@@ -694,25 +702,47 @@ void _primitiveAssembly(int numIndices, int curPrimitiveBeginId, Primitive* dev_
 	
 }
 
+/*
+	For every triangle
+	Calculate AABB
+	Iterate through min and max AABB bounds
+	Calculate barycentric coord 
+	Check if barycentric coord is in triangle 
 
+	NOTES for depth test 
+	- if currdepth is < curr depth in depth buffer, replace and write to depth buffer with new value
+	- need to create a float buffer for this
+	- or use the int depth_buffer as an index container
+	- fragmentbuffer[depth_buffer[idx]].color = glm::vec3(depthval)
+	- TO USE INT BUFFER, SCALE THE DEPTH VALUE YOU GET SO THAT IT BECOMES AN INT
+	- AND THEN JUST COMPARE WITH THAT
+	- race condition : if multiple threads trying to write to same place in depth buffer
+*/
 
 __global__
 void _rasterize(int numTriIndices, Primitive* dev_primitives, Fragment* fragmentBuffer, int width, int* dev_depth)
 {
-	// For every triangle
-	// Calculate AABB
-	// Iterate through min and max AABB bounds
-	// Calculate barycentric coord 
-	// Check if barycentric coord is in triangle 
-
 	int idx = (blockIdx.x * blockDim.x) + threadIdx.x;
 
 	if (idx < numTriIndices)
 	{
+		//Interpolate values of triangle's 3 vertices
+		Primitive primitive = dev_primitives[idx];
+
+		glm::vec3 triEyePos[3];
+		triEyePos[0] = glm::vec3(primitive.v[0].eyePos);
+		triEyePos[1] = glm::vec3(primitive.v[1].eyePos);
+		triEyePos[2] = glm::vec3(primitive.v[2].eyePos);
+
+		glm::vec3 triEyeNor[3];
+		triEyeNor[0] = glm::vec3(primitive.v[0].eyeNor);
+		triEyeNor[1] = glm::vec3(primitive.v[1].eyeNor);
+		triEyeNor[2] = glm::vec3(primitive.v[2].eyeNor);
+
 		glm::vec3 triPos[3];
-		triPos[0] = glm::vec3(dev_primitives[idx].v[0].pos);
-		triPos[1] = glm::vec3(dev_primitives[idx].v[1].pos);
-		triPos[2] = glm::vec3(dev_primitives[idx].v[2].pos);
+		triPos[0] = glm::vec3(primitive.v[0].pos);
+		triPos[1] = glm::vec3(primitive.v[1].pos);
+		triPos[2] = glm::vec3(primitive.v[2].pos);
 		AABB triAABB = getAABBForTriangle(triPos);
 
 		for (int x = triAABB.min.x; x <= triAABB.max.x; x++)
@@ -724,32 +754,40 @@ void _rasterize(int numTriIndices, Primitive* dev_primitives, Fragment* fragment
 				if (isBaryCoordInTri)
 				{
 					int fragIdx = x + (y * width);
-					//fragmentBuffer[fragIdx].color = glm::vec3(1.0, 0.0, 0.0);
 
-
+					// Calculating color according to depth buffer
 					float depthVal = getZAtCoordinate(baryCoord, triPos);
 					int scale = 10000;
 					int scaledDepth = scale * -(depthVal);
+
+					//WHICH WAY IS CORRECT?
+					//int nearest = atomicMin(&dev_depth[fragIdx], scaledDepth);
+					//if (nearest == scaledDepth)
+					//{
+					//	glm::vec3 newColor(dev_depth[fragIdx] / (float)scale);
+					//	fragmentBuffer[fragIdx].color = newColor;
+
+					//	glm::vec3 interpolatedEyePos(baryCoord.x * triEyePos[0] + baryCoord.y * triEyePos[1] + baryCoord.z * triEyePos[2]);
+					//	glm::vec3 interpolatedEyeNor(baryCoord.x * triEyeNor[0] + baryCoord.y * triEyeNor[1] + baryCoord.z * triEyeNor[2]);
+					//	fragmentBuffer[fragIdx].eyePos = interpolatedEyePos;
+					//	fragmentBuffer[fragIdx].eyeNor = interpolatedEyeNor;
+					//}
+
 					atomicMin(&dev_depth[fragIdx], scaledDepth);
+
 					glm::vec3 newColor(dev_depth[fragIdx] / (float)scale);
 					fragmentBuffer[fragIdx].color = newColor;
 
+					glm::vec3 interpolatedEyePos(baryCoord.x * triEyePos[0] + baryCoord.y * triEyePos[1] + baryCoord.z * triEyePos[2]);
+					glm::vec3 interpolatedEyeNor(baryCoord.x * triEyeNor[0] + baryCoord.y * triEyeNor[1] + baryCoord.z * triEyeNor[2]);
+					fragmentBuffer[fragIdx].eyePos = interpolatedEyePos;
+					fragmentBuffer[fragIdx].eyeNor = interpolatedEyeNor;
 
-					//if currdepth is < curr depth in depth buffer, replace and write to depth buffer with new value
-					//need to create a float buffer for this
-					//or use the int depth_buffer as an index container 
-					//fragmentbuffer[depth_buffer[idx]].color = glm::vec3(depthval)
-					//TO USE INT BUFFER, SCALE THE DEPTH VALUE YOU GET SO THAT IT BECOMES AN INT 
-					//AND THEN JUST COMPARE WITH THAT
-					//race condition : if multiple threads trying to write to same place in depth buffer 
-					
 
 				}//end if baryInBounds
-
 			}//end for y
 		}//end for x
-
-	}//end if idx < numTriIndices
+	}//end if idx
 }//end _rasterize
 
 
