@@ -25,6 +25,19 @@ glm::vec3 multiplyMV(glm::mat4 m, glm::vec4 v) {
     return glm::vec3(m * v);
 }
 
+
+// WRITING MY OWN
+/**
+* Multiplies a glm::mat4 matrix and a vec3.
+*/
+__host__ __device__ static
+glm::vec3 multiplyMV3to4(glm::mat4 m, glm::vec3 v) {
+	glm::vec4 updatedV = glm::vec4(v, 1.0f);
+	glm::vec4 output = m * updatedV;
+	return glm::vec3(output);
+}
+
+
 // CHECKITOUT
 /**
  * Finds the axis aligned bounding box for a given triangle.
