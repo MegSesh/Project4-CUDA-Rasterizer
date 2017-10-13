@@ -19,8 +19,8 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #define DEPTH_TEST			false
-#define NORMAL_TEST			true
-#define LAMBERT_SHADING		false
+#define NORMAL_TEST			false
+#define LAMBERT_SHADING		true
 #define LIGHT_POS			glm::vec3(0.0f, 0.0f, 0.0f)
 #define FRAG_COL			glm::vec3(0.0f, 0.5f, 1.0f)
 
@@ -61,7 +61,7 @@ namespace {
 		VertexOut v[3];
 	};
 
-	//EYESPACE = VIEW SPACE
+	//EYESPACE = CAMERA/VIEW SPACE
 
 	struct Fragment {
 		glm::vec3 color;
@@ -72,8 +72,10 @@ namespace {
 
 		 glm::vec3 eyePos;	// eye space position used for shading
 		 glm::vec3 eyeNor;
-		// VertexAttributeTexcoord texcoord0;
-		// TextureData* dev_diffuseTex;
+		 VertexAttributeTexcoord texcoord0;
+		 TextureData* dev_diffuseTex;
+		 int diffuseTexWidth;
+		 int diffuseTexHeight;
 		// ...
 	};
 
@@ -91,9 +93,11 @@ namespace {
 		VertexAttributeTexcoord* dev_texcoord0;
 
 		// Materials, add more attributes when needed
+		
 		TextureData* dev_diffuseTex;
 		int diffuseTexWidth;
 		int diffuseTexHeight;
+
 		// TextureData* dev_specularTex;
 		// TextureData* dev_normalTex;
 		// ...
@@ -150,27 +154,48 @@ void render(int w, int h, Fragment *fragmentBuffer, glm::vec3 *framebuffer) {
     int y = (blockIdx.y * blockDim.y) + threadIdx.y;
     int index = x + (y * w);
 
-    if (x < w && y < h) {
-		
-		glm::vec3 outputColor(1.0f);
+    if (x < w && y < h) 
+	{
 		Fragment currFrag = fragmentBuffer[index];
 
 		// TODO: add your fragment shader code here
 
-		if(DEPTH_TEST)		outputColor = glm::vec3(currFrag.color);
-		
-		else if (LAMBERT_SHADING)
+		if (currFrag.dev_diffuseTex == NULL)
 		{
-			float lambert = glm::abs(glm::dot(currFrag.eyeNor, glm::normalize(LIGHT_POS - currFrag.eyePos)));
-			outputColor = glm::vec3(glm::clamp(lambert * currFrag.color, 0.0f, 1.0f));
+			glm::vec3 outputColor(1.0f);
+
+			if (DEPTH_TEST)
+			{
+				// The background is black instead of white because rendering based on only frag color
+				// If depth buffer was passed, then this would render the background as white 
+				// since the buffer was set to high int's
+				outputColor = glm::vec3(currFrag.color);
+			}
+
+			else if (LAMBERT_SHADING)
+			{
+				float lambert = glm::abs(glm::dot(currFrag.eyeNor, glm::normalize(LIGHT_POS - currFrag.eyePos)));
+				outputColor = glm::vec3(glm::clamp(lambert * currFrag.color, 0.0f, 1.0f));
+			}
+
+			else if (NORMAL_TEST)
+			{
+				outputColor = glm::vec3(glm::clamp(currFrag.eyeNor, 0.0f, 1.0f));
+			}
+
+			framebuffer[index] = outputColor;
+		}
+		else
+		{
+			// Texture Mapping
+			// Scale the UV coords to width and height of texture
+			int uCoord = currFrag.texcoord0.x * currFrag.diffuseTexWidth;
+			int vCoord = currFrag.texcoord0.y * currFrag.diffuseTexHeight;
+			int pixelUVIdx = 3 * (uCoord + (vCoord * currFrag.diffuseTexWidth));
+			glm::vec3 texColor(currFrag.dev_diffuseTex[pixelUVIdx + 0] / 255.0f, currFrag.dev_diffuseTex[pixelUVIdx + 1] / 255.0f, currFrag.dev_diffuseTex[pixelUVIdx + 2] / 255.0f);
+			framebuffer[index] = texColor;
 		}
 
-		else if (NORMAL_TEST)
-		{
-			outputColor = glm::vec3(glm::clamp(currFrag.eyeNor, 0.0f, 1.0f));
-		}
-
-		framebuffer[index] = outputColor;
     }
 }
 
@@ -645,7 +670,9 @@ void rasterizeSetBuffers(const tinygltf::Scene & scene) {
 
 }
 
-
+// ===========================================================================================
+//										Vertex Assembly 
+// ===========================================================================================
 
 __global__ 
 void _vertexTransformAndAssembly(
@@ -668,7 +695,7 @@ void _vertexTransformAndAssembly(
 		glm::vec4 unHomScreenSpace = MVP * _currVertPos;
 
 		// Then divide the pos by its w element to transform into NDC space
-		// Perspective divide
+		// Perspective divide and Perspective Correct Interpolation
 		unHomScreenSpace /= unHomScreenSpace.w;
 		
 		// Finally transform x and y to viewport space
@@ -678,10 +705,10 @@ void _vertexTransformAndAssembly(
 		pixelPos.x = pixelX;
 		pixelPos.y = pixelY;
 
-		// Perspective Correct Interpolation
 		// Convert z from [-1, 1] to [0, 1] to be between clipping planes
 		pixelPos.z = -(1.0f + pixelPos.z) / 2.0f;
 
+		// Position and normal from camera 
 		glm::vec3 cameraPos = glm::vec3(MV * _currVertPos);
 		glm::vec3 cameraNor = glm::normalize(MV_normal * currNor);
 
@@ -694,12 +721,44 @@ void _vertexTransformAndAssembly(
 		// Give a preliminary color 
 		primitive.dev_verticesOut[vid].col = FRAG_COL;
 
-		// Need to also do the following
-		//texcoords, dev_diffuseTex, texwidth, texheight
+		// Texture info
+		if (primitive.dev_diffuseTex == NULL)
+		{
+			primitive.dev_verticesOut[vid].dev_diffuseTex = NULL;
+		}
+		else
+		{
+			primitive.dev_verticesOut[vid].dev_diffuseTex = primitive.dev_diffuseTex;
+			primitive.dev_verticesOut[vid].texcoord0 = primitive.dev_texcoord0[vid];
+			primitive.dev_verticesOut[vid].texWidth = primitive.diffuseTexWidth;
+			primitive.dev_verticesOut[vid].texHeight = primitive.diffuseTexHeight;
+		}
 	}
 }
 
 
+/*
+glm::vec2 currTexCoord = primitive.dev_texcoord0[vid];
+glm::vec4 _currTexCoord = glm::vec4(currTexCoord, 1.0f, 1.0f);
+glm::vec4 unHomScreenSpaceTexCoord = MVP * _currTexCoord;
+unHomScreenSpaceTexCoord /= unHomScreenSpaceTexCoord.w;
+
+glm::vec4 pixelTexPos = unHomScreenSpaceTexCoord;
+float pixelTexX = (float)width * ((unHomScreenSpaceTexCoord.x + 1.0f) / 2.0f);
+float pixelTexY = (float)height * ((1.0f - unHomScreenSpaceTexCoord.y) / 2.0f);
+pixelTexPos.x = pixelTexX;
+pixelTexPos.y = pixelTexY;
+
+
+pixelTexPos.z = -(1.0f + pixelTexPos.z) / 2.0f;
+
+primitive.dev_verticesOut[vid].texcoord0 = glm::vec2(pixelTexPos.x, pixelTexPos.y);
+*/
+
+
+// ===========================================================================================
+//										Primitive Assembly 
+// ===========================================================================================
 
 static int curPrimitiveBeginId = 0;
 
@@ -726,6 +785,11 @@ void _primitiveAssembly(int numIndices, int curPrimitiveBeginId, Primitive* dev_
 	}
 	
 }
+
+
+// ===========================================================================================
+//										Rasterize Kernel
+// ===========================================================================================
 
 /*
 	For every triangle
@@ -769,6 +833,11 @@ void _rasterize(int numTriIndices, Primitive* dev_primitives, Fragment* fragment
 		triFragCol[1] = glm::vec3(currPrim.v[1].col);
 		triFragCol[2] = glm::vec3(currPrim.v[2].col);
 
+		glm::vec2 triTexCoord[3];
+		triTexCoord[0] = glm::vec2(currPrim.v[0].texcoord0);
+		triTexCoord[1] = glm::vec2(currPrim.v[1].texcoord0);
+		triTexCoord[2] = glm::vec2(currPrim.v[2].texcoord0);
+
 		glm::vec3 triPos[3];
 		triPos[0] = glm::vec3(currPrim.v[0].pos);
 		triPos[1] = glm::vec3(currPrim.v[1].pos);
@@ -789,6 +858,9 @@ void _rasterize(int numTriIndices, Primitive* dev_primitives, Fragment* fragment
 					float depthVal = getZAtCoordinate(baryCoord, triPos);
 					int scale = 10000;
 					int scaledDepth = scale * depthVal;
+
+
+					// SHOULD TRY AND USE MUTEXES HERE INSTEAD
 
 					atomicMin(&dev_depth[fragIdx], scaledDepth);
 					if (scaledDepth == dev_depth[fragIdx])
@@ -825,13 +897,40 @@ void _rasterize(int numTriIndices, Primitive* dev_primitives, Fragment* fragment
 							fragmentBuffer[fragIdx].color = interpolatedFragColor;
 						}
 
-					}
+						// Texture Mapping
+						// Perspective Correct Bary Coord
+						glm::vec3 perspCorrectBaryCoord(baryCoord.x / triEyePos[0].z, 
+														baryCoord.y / triEyePos[1].z, 
+														baryCoord.z / triEyePos[2].z);
 
+						float uFactor = perspCorrectBaryCoord.x * triTexCoord[0].x +
+										perspCorrectBaryCoord.y * triTexCoord[1].x +
+										perspCorrectBaryCoord.z * triTexCoord[2].x;
+
+						float vFactor = perspCorrectBaryCoord.x * triTexCoord[0].y +
+										perspCorrectBaryCoord.y * triTexCoord[1].y +
+										perspCorrectBaryCoord.z * triTexCoord[2].y;
+
+						float z = 1.0f / (perspCorrectBaryCoord.x + perspCorrectBaryCoord.y + perspCorrectBaryCoord.z);
+						
+						fragmentBuffer[fragIdx].texcoord0 = glm::vec2(uFactor * z, vFactor * z);
+
+						// These should be the same regardless of which prim's vertex
+						fragmentBuffer[fragIdx].dev_diffuseTex = currPrim.v[0].dev_diffuseTex;
+						fragmentBuffer[fragIdx].diffuseTexWidth = currPrim.v[0].texWidth;
+						fragmentBuffer[fragIdx].diffuseTexHeight = currPrim.v[0].texHeight;
+
+					}//if depths are equal
 				}//end if baryInBounds
 			}//end for y
 		}//end for x
 	}//end if idx
 }//end _rasterize
+
+
+ // ===========================================================================================
+ //										Rasterize CPU Function 
+ // ===========================================================================================
 
 
 /**
@@ -856,16 +955,20 @@ void rasterize(uchar4 *pbo, const glm::mat4 & MVP, const glm::mat4 & MV, const g
 		auto it = mesh2PrimitivesMap.begin();
 		auto itEnd = mesh2PrimitivesMap.end();
 
-		for (; it != itEnd; ++it) {
+		for (; it != itEnd; ++it) 
+		{
 			auto p = (it->second).begin();	// each primitive
 			auto pEnd = (it->second).end();
-			for (; p != pEnd; ++p) {
+			for (; p != pEnd; ++p) 
+			{
 				dim3 numBlocksForVertices((p->numVertices + numThreadsPerBlock.x - 1) / numThreadsPerBlock.x);
 				dim3 numBlocksForIndices((p->numIndices + numThreadsPerBlock.x - 1) / numThreadsPerBlock.x);
 
 				_vertexTransformAndAssembly <<< numBlocksForVertices, numThreadsPerBlock >>>(p->numVertices, *p, MVP, MV, MV_normal, width, height);
 				checkCUDAError("Vertex Processing");
+				
 				cudaDeviceSynchronize();
+
 				_primitiveAssembly <<< numBlocksForIndices, numThreadsPerBlock >>>
 					(p->numIndices, 
 					curPrimitiveBeginId, 
