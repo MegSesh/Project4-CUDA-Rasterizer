@@ -18,6 +18,12 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#define DEPTH_TEST			false
+#define NORMAL_TEST			true
+#define LAMBERT_SHADING		false
+#define LIGHT_POS			glm::vec3(0.0f, 0.0f, 0.0f)
+#define FRAG_COL			glm::vec3(0.0f, 0.5f, 1.0f)
+
 namespace {
 
 	typedef unsigned short VertexIndex;
@@ -43,10 +49,10 @@ namespace {
 
 		 glm::vec3 eyePos;	// eye space position used for shading
 		 glm::vec3 eyeNor;	// eye space normal used for shading, cuz normal will go wrong after perspective transformation
-		// glm::vec3 col; 
+		 glm::vec3 col; 
 		 glm::vec2 texcoord0;
 		 TextureData* dev_diffuseTex = NULL;
-		// int texWidth, texHeight;
+		 int texWidth, texHeight;
 		// ...
 	};
 
@@ -146,17 +152,25 @@ void render(int w, int h, Fragment *fragmentBuffer, glm::vec3 *framebuffer) {
 
     if (x < w && y < h) {
 		
+		glm::vec3 outputColor(1.0f);
 		Fragment currFrag = fragmentBuffer[index];
 
-
-
-		framebuffer[index] = currFrag.color;// glm::dot(currFrag.eyeNor, );// currFrag.color;
-
 		// TODO: add your fragment shader code here
-		//float d = glm::clamp(glm::dot(fragment normal, glm::normalize(lightPos - fragment pos)), 0.0, 1.0);
-		//glm::vec3 
-		//float lambert = glm::clamp(glm::dot(currFrag.eyeNor, glm::normalize(lightPos - currFrag.eyePos)), 0.0f, 1.0f);
 
+		if(DEPTH_TEST)		outputColor = glm::vec3(currFrag.color);
+		
+		else if (LAMBERT_SHADING)
+		{
+			float lambert = glm::abs(glm::dot(currFrag.eyeNor, glm::normalize(LIGHT_POS - currFrag.eyePos)));
+			outputColor = glm::vec3(glm::clamp(lambert * currFrag.color, 0.0f, 1.0f));
+		}
+
+		else if (NORMAL_TEST)
+		{
+			outputColor = glm::vec3(glm::clamp(currFrag.eyeNor, 0.0f, 1.0f));
+		}
+
+		framebuffer[index] = outputColor;
     }
 }
 
@@ -654,6 +668,7 @@ void _vertexTransformAndAssembly(
 		glm::vec4 unHomScreenSpace = MVP * _currVertPos;
 
 		// Then divide the pos by its w element to transform into NDC space
+		// Perspective divide
 		unHomScreenSpace /= unHomScreenSpace.w;
 		
 		// Finally transform x and y to viewport space
@@ -663,6 +678,10 @@ void _vertexTransformAndAssembly(
 		pixelPos.x = pixelX;
 		pixelPos.y = pixelY;
 
+		// Perspective Correct Interpolation
+		// Convert z from [-1, 1] to [0, 1] to be between clipping planes
+		pixelPos.z = -(1.0f + pixelPos.z) / 2.0f;
+
 		glm::vec3 cameraPos = glm::vec3(MV * _currVertPos);
 		glm::vec3 cameraNor = glm::normalize(MV_normal * currNor);
 
@@ -671,6 +690,12 @@ void _vertexTransformAndAssembly(
 		primitive.dev_verticesOut[vid].pos = pixelPos;
 		primitive.dev_verticesOut[vid].eyePos = cameraPos;
 		primitive.dev_verticesOut[vid].eyeNor = cameraNor;
+
+		// Give a preliminary color 
+		primitive.dev_verticesOut[vid].col = FRAG_COL;
+
+		// Need to also do the following
+		//texcoords, dev_diffuseTex, texwidth, texheight
 	}
 }
 
@@ -727,22 +752,27 @@ void _rasterize(int numTriIndices, Primitive* dev_primitives, Fragment* fragment
 	if (idx < numTriIndices)
 	{
 		//Interpolate values of triangle's 3 vertices
-		Primitive primitive = dev_primitives[idx];
+		Primitive currPrim = dev_primitives[idx];
 
 		glm::vec3 triEyePos[3];
-		triEyePos[0] = glm::vec3(primitive.v[0].eyePos);
-		triEyePos[1] = glm::vec3(primitive.v[1].eyePos);
-		triEyePos[2] = glm::vec3(primitive.v[2].eyePos);
+		triEyePos[0] = glm::vec3(currPrim.v[0].eyePos);
+		triEyePos[1] = glm::vec3(currPrim.v[1].eyePos);
+		triEyePos[2] = glm::vec3(currPrim.v[2].eyePos);
 
 		glm::vec3 triEyeNor[3];
-		triEyeNor[0] = glm::vec3(primitive.v[0].eyeNor);
-		triEyeNor[1] = glm::vec3(primitive.v[1].eyeNor);
-		triEyeNor[2] = glm::vec3(primitive.v[2].eyeNor);
+		triEyeNor[0] = glm::vec3(currPrim.v[0].eyeNor);
+		triEyeNor[1] = glm::vec3(currPrim.v[1].eyeNor);
+		triEyeNor[2] = glm::vec3(currPrim.v[2].eyeNor);
+
+		glm::vec3 triFragCol[3];
+		triFragCol[0] = glm::vec3(currPrim.v[0].col);
+		triFragCol[1] = glm::vec3(currPrim.v[1].col);
+		triFragCol[2] = glm::vec3(currPrim.v[2].col);
 
 		glm::vec3 triPos[3];
-		triPos[0] = glm::vec3(primitive.v[0].pos);
-		triPos[1] = glm::vec3(primitive.v[1].pos);
-		triPos[2] = glm::vec3(primitive.v[2].pos);
+		triPos[0] = glm::vec3(currPrim.v[0].pos);
+		triPos[1] = glm::vec3(currPrim.v[1].pos);
+		triPos[2] = glm::vec3(currPrim.v[2].pos);
 		AABB triAABB = getAABBForTriangle(triPos);
 
 		for (int x = triAABB.min.x; x <= triAABB.max.x; x++)
@@ -758,31 +788,44 @@ void _rasterize(int numTriIndices, Primitive* dev_primitives, Fragment* fragment
 					// Calculating color according to depth buffer
 					float depthVal = getZAtCoordinate(baryCoord, triPos);
 					int scale = 10000;
-					int scaledDepth = scale * -(depthVal);
-
-					//WHICH WAY IS CORRECT?
-					//int nearest = atomicMin(&dev_depth[fragIdx], scaledDepth);
-					//if (nearest == scaledDepth)
-					//{
-					//	glm::vec3 newColor(dev_depth[fragIdx] / (float)scale);
-					//	fragmentBuffer[fragIdx].color = newColor;
-
-					//	glm::vec3 interpolatedEyePos(baryCoord.x * triEyePos[0] + baryCoord.y * triEyePos[1] + baryCoord.z * triEyePos[2]);
-					//	glm::vec3 interpolatedEyeNor(baryCoord.x * triEyeNor[0] + baryCoord.y * triEyeNor[1] + baryCoord.z * triEyeNor[2]);
-					//	fragmentBuffer[fragIdx].eyePos = interpolatedEyePos;
-					//	fragmentBuffer[fragIdx].eyeNor = interpolatedEyeNor;
-					//}
+					int scaledDepth = scale * depthVal;
 
 					atomicMin(&dev_depth[fragIdx], scaledDepth);
+					if (scaledDepth == dev_depth[fragIdx])
+					{
+						if (DEPTH_TEST)
+						{
+							glm::vec3 newColor(dev_depth[fragIdx] / (float)scale);
+							fragmentBuffer[fragIdx].color = newColor;
+						}
 
-					glm::vec3 newColor(dev_depth[fragIdx] / (float)scale);
-					fragmentBuffer[fragIdx].color = newColor;
+						else if (LAMBERT_SHADING)
+						{
+							glm::vec3 interpolatedEyePos(baryCoord.x * triEyePos[0] + baryCoord.y * triEyePos[1] + baryCoord.z * triEyePos[2]);
+							glm::vec3 interpolatedEyeNor(baryCoord.x * triEyeNor[0] + baryCoord.y * triEyeNor[1] + baryCoord.z * triEyeNor[2]);
+							glm::vec3 interpolatedFragColor(baryCoord.x * triFragCol[0] + baryCoord.y * triFragCol[1] + baryCoord.z * triFragCol[2]);
 
-					glm::vec3 interpolatedEyePos(baryCoord.x * triEyePos[0] + baryCoord.y * triEyePos[1] + baryCoord.z * triEyePos[2]);
-					glm::vec3 interpolatedEyeNor(baryCoord.x * triEyeNor[0] + baryCoord.y * triEyeNor[1] + baryCoord.z * triEyeNor[2]);
-					fragmentBuffer[fragIdx].eyePos = interpolatedEyePos;
-					fragmentBuffer[fragIdx].eyeNor = interpolatedEyeNor;
+							fragmentBuffer[fragIdx].eyePos = interpolatedEyePos;
+							fragmentBuffer[fragIdx].eyeNor = interpolatedEyeNor;
+							fragmentBuffer[fragIdx].color = interpolatedFragColor;
+						}
 
+						else if (NORMAL_TEST)
+						{
+							glm::vec3 interpolatedEyePos(baryCoord.x * triEyePos[0] + baryCoord.y * triEyePos[1] + baryCoord.z * triEyePos[2]);
+							glm::vec3 interpolatedEyeNor(baryCoord.x * triEyeNor[0] + baryCoord.y * triEyeNor[1] + baryCoord.z * triEyeNor[2]);
+
+							fragmentBuffer[fragIdx].eyePos = interpolatedEyePos;
+							fragmentBuffer[fragIdx].eyeNor = interpolatedEyeNor;
+						}
+
+						else
+						{
+							glm::vec3 interpolatedFragColor(baryCoord.x * triFragCol[0] + baryCoord.y * triFragCol[1] + baryCoord.z * triFragCol[2]);
+							fragmentBuffer[fragIdx].color = interpolatedFragColor;
+						}
+
+					}
 
 				}//end if baryInBounds
 			}//end for y
@@ -803,7 +846,7 @@ void rasterize(uchar4 *pbo, const glm::mat4 & MVP, const glm::mat4 & MV, const g
 	// Execute your rasterization pipeline here
 	// (See README for rasterization pipeline outline.)
 
-	//CLEAR FRAGMENT BUFFER WITH SOME DEFAULT VALUE HERE?!
+	//CLEAR FRAGMENT AND DEPTH BUFFERS WITH SOME DEFAULT VALUE HERE?!
 
 	// Vertex Process & primitive assembly
 	{
