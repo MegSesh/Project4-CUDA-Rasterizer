@@ -61,7 +61,7 @@ If you are using Visual Studio, you can set this in the `Debugging > Command Arg
 * Fragment[m] rasterized -> Fragment[width][height] depthbuffer
 * depthbuffer is for storing and depth testing fragments.
 
-***Depth Buffer Testing***
+**Depth Buffer Testing**
 
 Each pixel can contain multiple fragments, each at different z-depth values. In a rasterizer, one must only render the fragment with the minimum depth (aka the front most fragment). The nearest fragments per pixel are then stored in a depth buffer. Every run of the rasterization will constantly find the nearest fragment and update the depth buffer accordingly. 
 
@@ -107,6 +107,52 @@ Approach 2 is the safer of the two approaches. By allocating a device int array 
 
 
 ## Performance Analysis
+
+
+IMPORTANT: For each extra feature, please provide the following brief analysis:
+Concise overview write-up of the feature.
+Performance impact of adding the feature (slower or faster).
+where is the performance hit?
+where is the performance improvement?
+If you did something to accelerate the feature, what did you do and why?
+How might this feature be optimized beyond your current implementation?
+
+
+### Performance Across Pipeline
+![](renders/FinalRenders/modeltestingpipeline.PNG)
+
+
+
+### Feature Analysis 
+
+#### UV texture Mapping with bilinear texture filtering and perspective correct texture coordinates
+
+
+![](renders/FinalRenders/texturing_duck_chart.PNG)
+
+![](renders/FinalRenders/notexturing_cow_chart.PNG)
+
+
+
+#### Support for rasterizing points, lines, and triangles
+
+**Points**
+![](renders/FinalRenders/renderingpoints_box_chart.PNG)
+
+![](renders/FinalRenders/renderingpoints_cow_chart.PNG)
+
+
+**Lines**
+![](renders/FinalRenders/renderinglines_box_chart.PNG)
+
+![](renders/FinalRenders/renderinglines_cow_chart.PNG)
+
+
+### Mutex Test
+![](renders/FinalRenders/mutextest_notzoomed.PNG)
+
+![](renders/FinalRenders/mutextest_zoomed.PNG)
+
 
 
 

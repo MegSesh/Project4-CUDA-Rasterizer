@@ -18,6 +18,10 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <cstring>
+#include <chrono>
+
+
 #define DEPTH_TEST			false
 #define NORMAL_TEST			false
 #define LAMBERT_SHADING		true
@@ -152,9 +156,52 @@ void sendImageToPBO(uchar4 *pbo, int w, int h, glm::vec3 *image) {
     }
 }
 
+
+
+// =============================================================================
+//								TIMER FUNCTIONS
+// =============================================================================
+
+using time_point_t = std::chrono::high_resolution_clock::time_point;
+time_point_t time_start_cpu;
+time_point_t time_end_cpu;
+bool cpu_timer_started = false;
+float prev_elapsed_time_cpu_milliseconds = 0.f;
+
+void startCpuTimer()
+{
+	if (cpu_timer_started) { throw std::runtime_error("CPU timer already started"); }
+	cpu_timer_started = true;
+	time_start_cpu = std::chrono::high_resolution_clock::now();
+}
+
+void endCpuTimer()
+{
+	time_end_cpu = std::chrono::high_resolution_clock::now();
+
+	if (!cpu_timer_started) { throw std::runtime_error("CPU timer not started"); }
+
+	std::chrono::duration<double, std::milli> duro = time_end_cpu - time_start_cpu;
+	prev_elapsed_time_cpu_milliseconds =
+		static_cast<decltype(prev_elapsed_time_cpu_milliseconds)>(duro.count());
+
+	cpu_timer_started = false;
+}
+
+void printCPUTimer()
+{
+	std::cout << "Time (in ms): " << prev_elapsed_time_cpu_milliseconds << std::endl;
+}
+
+
+
 /** 
 * Writes fragment colors to the framebuffer
 */
+
+// ===========================================================================================
+//						FRAGMENT SHADING / FRAGMENT TO FRAME BUFFER WRITING
+// ===========================================================================================
 __global__
 void render(int w, int h, Fragment *fragmentBuffer, glm::vec3 *framebuffer) {
     int x = (blockIdx.x * blockDim.x) + threadIdx.x;
@@ -1176,15 +1223,17 @@ void rasterize(uchar4 *pbo, const glm::mat4 & MVP, const glm::mat4 & MV, const g
 	// Execute your rasterization pipeline here
 	// (See README for rasterization pipeline outline.)
 
-	//CLEAR FRAGMENT AND DEPTH BUFFERS WITH SOME DEFAULT VALUE HERE?!
-
-	// Vertex Process & primitive assembly
+	// ================================== Vertex Process & primitive assembly ==================================
+	//startCpuTimer();
+ 
 	{
 		curPrimitiveBeginId = 0;
 		dim3 numThreadsPerBlock(128);
 
 		auto it = mesh2PrimitivesMap.begin();
 		auto itEnd = mesh2PrimitivesMap.end();
+
+
 
 		for (; it != itEnd; ++it) 
 		{
@@ -1212,13 +1261,18 @@ void rasterize(uchar4 *pbo, const glm::mat4 & MVP, const glm::mat4 & MV, const g
 		}
 
 		checkCUDAError("Vertex Processing and Primitive Assembly");
-	}
+	} // end vertex process and prim assembly
 	
+	//endCpuTimer();
+	//printCPUTimer();
+
+	// ================================== initialize depth and fragment buffer ==================================
 	cudaMemset(dev_fragmentBuffer, 0, width * height * sizeof(Fragment));
 	initDepth << <blockCount2d, blockSize2d >> >(width, height, dev_depth);
 	
+	// ================================== rasterize ==================================
+	//startCpuTimer();
 
-	// TODO: rasterize
 	dim3 primitive_numThreadsPerBlock(128);
 	dim3 numBlocksForPrimitives((totalNumPrimitives + primitive_numThreadsPerBlock.x - 1) / primitive_numThreadsPerBlock.x);
 	_rasterize <<<numBlocksForPrimitives, primitive_numThreadsPerBlock>>> (totalNumPrimitives, 
@@ -1230,15 +1284,21 @@ void rasterize(uchar4 *pbo, const glm::mat4 & MVP, const glm::mat4 & MV, const g
 																			dev_mutex);
 	checkCUDAError("_rasterize");
 
+	//endCpuTimer();
+	//printCPUTimer();
 
-    // Copy depthbuffer colors into framebuffer
+	// ================================== Copy depthbuffer colors into framebuffer ==================================
+	startCpuTimer();
 	render <<<blockCount2d, blockSize2d >>>(width, height, dev_fragmentBuffer, dev_framebuffer);
 	checkCUDAError("fragment shader");
+	endCpuTimer();
+	printCPUTimer();
 
-    // Copy framebuffer into OpenGL buffer for OpenGL previewing
+	// ================================== Copy framebuffer into OpenGL buffer for OpenGL previewing ==================================
     sendImageToPBO<<<blockCount2d, blockSize2d>>>(pbo, width, height, dev_framebuffer);
     checkCUDAError("copy render result to pbo");
-}
+
+}//end rasterize function
 
 /**
  * Called once at the end of the program to free CUDA memory.
