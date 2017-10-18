@@ -45,14 +45,42 @@ If you are using Visual Studio, you can set this in the `Debugging > Command Arg
 
 ### Rasterization Pipeline
 
-### 
+#### Vertex Shading
+* VertexIn[n] vs_input -> VertexOut[n] vs_output
+* Apply some vertex transformation (e.g. model-view-projection matrix using glm::lookAt and glm::perspective).
 
+#### Primitive assembly
+* VertexOut[n] vs_output -> Triangle[t] primitives
 
-#### Depth Buffer Testing
+#### Rasterization
+* Triangle[t] primitives -> Fragment[m] rasterized
+* Parallelize over triangles, but now avoid looping over all pixels:
+	- When rasterizing a triangle, only scan over the box around the triangle (getAABBForTriangle).
 
-Each pixel can contain multiple fragments. In a rasterizer, one must only render the fragment with the minimum most depth (aka it's the front most fragment). The nearest fragments per pixel are then stored in a depth buffer. Every run of the rasterization will constantly find the nearest fragment and update the depth buffer accordingly. CUDA mutexes are used in order to test the fragments being allocated to the depth buffer.
+#### Fragments to depth buffer 
+* Fragment[m] rasterized -> Fragment[width][height] depthbuffer
+* depthbuffer is for storing and depth testing fragments.
 
+***Depth Buffer Testing***
 
+Each pixel can contain multiple fragments, each at different z-depth values. In a rasterizer, one must only render the fragment with the minimum depth (aka the front most fragment). The nearest fragments per pixel are then stored in a depth buffer. Every run of the rasterization will constantly find the nearest fragment and update the depth buffer accordingly. 
+
+This process can be done before fragment shading, which prevents the fragment shader from changing the depth of a fragment. In order to do this safely on the GPU, however, race conditions must be avoided. Race conditions can occur ince multiple primitives in a scene are writing their fragment to the same place in the depth buffer. In order to handle this, there are two approaches:
+
+* `Approach 1:` Convert your depth value to a fixed-point int, and use atomicMin to store it into an int-typed depth buffer intdepth. After that, the value which is stored at intdepth[i] is (usually) that of the fragment which should be stored into the fragment depth buffer.
+	- This may result in some rare race conditions (e.g. across blocks).
+
+* `Approach 2:` (The safer approach) Lock the location in the depth buffer during the time that a thread is comparing old and new fragment depths (and possibly writing a new fragment). This should work in all cases, but be slower. This method involves using CUDA mutexes to test only the fragments within a pixel serially. 
+
+Approach 2 is the safer of the two approaches. By allocating a device int array (set to all 0's initially), we can use this to store all the minimum depth values per pixel. The dimensions of this 1D array would be width * height to correspond with the screen. In the resources section, you can see a pseudocode breakdown of how this mutex is used. 
+
+#### Fragment shading
+* Fragment[width][height] depthbuffer ->
+* Add a shading method, such as Lambert or Blinn-Phong. Lights can be defined by kernel parameters (like GLSL uniforms).
+
+#### Fragment to framebuffer writing
+* -> vec3[width][height] framebuffer
+* Simply copies the colors out of the depth buffer into the framebuffer (to be displayed on the screen).
 
 
 ## Renders
