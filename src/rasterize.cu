@@ -24,6 +24,11 @@
 #define LIGHT_POS			glm::vec3(0.0f, 0.0f, 0.0f)
 #define FRAG_COL			glm::vec3(0.0f, 0.5f, 1.0f)
 
+#define BILINEAR			true
+#define USING_MUTEX			true
+#define DRAW_POINTS			false
+#define DRAW_LINES			false
+
 namespace {
 
 	typedef unsigned short VertexIndex;
@@ -123,6 +128,8 @@ static glm::vec3 *dev_framebuffer = NULL;
 
 static int * dev_depth = NULL;	// you might need this buffer when doing depth test
 
+static int * dev_mutex = NULL;
+
 /**
  * Kernel that writes the image to the OpenGL PBO directly.
  */
@@ -163,8 +170,13 @@ void render(int w, int h, Fragment *fragmentBuffer, glm::vec3 *framebuffer) {
 		if (currFrag.dev_diffuseTex == NULL)
 		{
 			glm::vec3 outputColor(1.0f);
+			
+			if (DRAW_POINTS || DRAW_LINES)
+			{
+				outputColor = glm::vec3(currFrag.color);
+			}
 
-			if (DEPTH_TEST)
+			else if (DEPTH_TEST)
 			{
 				// The background is black instead of white because rendering based on only frag color
 				// If depth buffer was passed, then this would render the background as white 
@@ -184,20 +196,67 @@ void render(int w, int h, Fragment *fragmentBuffer, glm::vec3 *framebuffer) {
 			}
 
 			framebuffer[index] = outputColor;
-		}
+		}//end if null texture
+
+		 // Texture Mapping with and w/o Bilinear filtering
 		else
 		{
-			// Texture Mapping
-			// Scale the UV coords to width and height of texture
-			int uCoord = currFrag.texcoord0.x * currFrag.diffuseTexWidth;
-			int vCoord = currFrag.texcoord0.y * currFrag.diffuseTexHeight;
-			int pixelUVIdx = 3 * (uCoord + (vCoord * currFrag.diffuseTexWidth));
-			glm::vec3 texColor(currFrag.dev_diffuseTex[pixelUVIdx + 0] / 255.0f, currFrag.dev_diffuseTex[pixelUVIdx + 1] / 255.0f, currFrag.dev_diffuseTex[pixelUVIdx + 2] / 255.0f);
-			framebuffer[index] = texColor;
-		}
+			//https://stackoverflow.com/questions/35005603/get-color-of-the-texture-at-uv-coordinate
+			//https://en.wikipedia.org/wiki/Bilinear_filtering
+			//https://www.scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/interpolation/bilinear-filtering
 
-    }
-}
+			glm::vec3 texColor(1.0f);
+			TextureData* tex = currFrag.dev_diffuseTex;
+			int texWidth = currFrag.diffuseTexWidth;
+			int texHeight = currFrag.diffuseTexHeight;
+			// Scale the UV coords to width and height of texture
+			float uCoord = currFrag.texcoord0.x * texWidth;
+			float vCoord = currFrag.texcoord0.y * texHeight;
+			float r = 1.0f;
+			float g = 1.0f;
+			float b = 1.0f;
+
+			if (BILINEAR)
+			{
+				int u_floor = glm::floor(uCoord);
+				int v_floor = glm::floor(vCoord);
+				float u_fract = uCoord - u_floor;
+				float v_fract = vCoord - v_floor;
+				float u_opposite = 1.0f - u_fract;
+				float v_opposite = 1.0f - v_fract;
+
+				int c00_idx = 3 * (u_floor + (v_floor * texWidth));
+				int c10_idx = 3 * ((u_floor + 1) + (v_floor * texWidth));
+				int c01_idx = 3 * (u_floor + ((v_floor + 1) * texWidth));
+				int c11_idx = 3 * ((u_floor + 1) + ((v_floor + 1) * texWidth));
+				
+				r = ((tex[c00_idx] * u_opposite + tex[c10_idx] * u_fract) * v_opposite) + 
+					((tex[c01_idx] * u_opposite + tex[c11_idx] * u_fract) * v_fract);
+				
+				g = ((tex[c00_idx + 1] * u_opposite + tex[c10_idx + 1] * u_fract) * v_opposite) +
+					((tex[c01_idx + 1] * u_opposite + tex[c11_idx + 1] * u_fract) * v_fract);
+
+				b = ((tex[c00_idx + 2] * u_opposite + tex[c10_idx + 2] * u_fract) * v_opposite) +
+					((tex[c01_idx + 2] * u_opposite + tex[c11_idx + 2] * u_fract) * v_fract);
+			}//end bilinear
+
+			else
+			{
+				int i_uCoord = int(uCoord);
+				int i_vCoord = int(vCoord);
+				int pixelUVIdx = 3 * (i_uCoord + (i_vCoord * texWidth));
+				r = tex[pixelUVIdx + 0];
+				g = tex[pixelUVIdx + 1];
+				b = tex[pixelUVIdx + 2];
+			}//end with no bilinear
+
+			texColor = glm::vec3(r, g, b) / 255.0f;
+			framebuffer[index] = texColor;
+
+		}//end else texture not null
+
+    }//end index
+}//end kernel
 
 /**
  * Called once at the beginning of the program to allocate memory.
@@ -214,6 +273,10 @@ void rasterizeInit(int w, int h) {
     
 	cudaFree(dev_depth);
 	cudaMalloc(&dev_depth, width * height * sizeof(int));
+
+	cudaFree(dev_mutex);
+	cudaMalloc(&dev_mutex, width * height * sizeof(int));
+	cudaMemset(dev_mutex, 0, width * height * sizeof(int));
 
 	checkCUDAError("rasterizeInit");
 }
@@ -737,25 +800,6 @@ void _vertexTransformAndAssembly(
 }
 
 
-/*
-glm::vec2 currTexCoord = primitive.dev_texcoord0[vid];
-glm::vec4 _currTexCoord = glm::vec4(currTexCoord, 1.0f, 1.0f);
-glm::vec4 unHomScreenSpaceTexCoord = MVP * _currTexCoord;
-unHomScreenSpaceTexCoord /= unHomScreenSpaceTexCoord.w;
-
-glm::vec4 pixelTexPos = unHomScreenSpaceTexCoord;
-float pixelTexX = (float)width * ((unHomScreenSpaceTexCoord.x + 1.0f) / 2.0f);
-float pixelTexY = (float)height * ((1.0f - unHomScreenSpaceTexCoord.y) / 2.0f);
-pixelTexPos.x = pixelTexX;
-pixelTexPos.y = pixelTexY;
-
-
-pixelTexPos.z = -(1.0f + pixelTexPos.z) / 2.0f;
-
-primitive.dev_verticesOut[vid].texcoord0 = glm::vec2(pixelTexPos.x, pixelTexPos.y);
-*/
-
-
 // ===========================================================================================
 //										Primitive Assembly 
 // ===========================================================================================
@@ -782,10 +826,85 @@ void _primitiveAssembly(int numIndices, int curPrimitiveBeginId, Primitive* dev_
 
 
 		// TODO: other primitive types (point, line)
+
+		//if (primitive.primitiveMode == TINYGLTF_MODE_POINTS)
+		//{
+
+		//}
+
+		//if (primitive.primitiveMode == TINYGLTF_MODE_LINE)
+		//{
+
+		//}
 	}
 	
 }
 
+__device__
+void _rasterizeLines(Fragment* fragmentBuffer, int width, int height, glm::vec3 pt1, glm::vec3 pt2, glm::vec3 color)
+{
+	int dx = pt2.x - pt1.x;
+	int dy = pt2.y - pt1.y;
+	int m = dy / dx;
+	int eps = 0;
+	int y = pt1.y;
+
+
+	int dxe = 0;
+
+	for (int x = pt1.x; x <= pt2.x; x++)
+	{
+
+		int fragIdx = x + (y * width);
+		fragmentBuffer[fragIdx].color = color;
+
+		// Method 1
+		// https://www.cs.helsinki.fi/group/goa/mallinnus/lines/bresenh.html
+		//eps += dy;
+		//if (m > 0)
+		//{
+		//	if ((eps << 1) >= dx)
+		//	{
+		//		y++;
+		//		eps -= dx;
+		//	}
+		//}
+
+		//if (m < 0)
+		//{
+		//	if (eps + m > -0.5)
+		//	{
+		//		eps = eps + m;
+		//	}
+		//	else
+		//	{
+		//		y--;
+		//		eps = eps + m + 1;
+		//	}
+		//}
+
+		// http://groups.csail.mit.edu/graphics/classes/6.837/F02/lectures/6.837-7_Line.pdf
+		// Method 2
+		// This is only for case x1 < x2, m <= 1
+		//y = pt1.y + m * (x - pt1.x);
+		//eps += m;
+		//if (eps > 0.5)
+		//{
+		//	y++;
+		//	eps -= 1;
+		//}
+
+
+		// Method 3
+		y = pt1.y + m * (x - pt1.x);
+		dxe += m * dx + dy;
+		if (dxe > (dx + 1) / 2)
+		{
+			y++;
+			eps -= 1;
+		}
+	}
+}
 
 // ===========================================================================================
 //										Rasterize Kernel
@@ -809,13 +928,12 @@ void _primitiveAssembly(int numIndices, int curPrimitiveBeginId, Primitive* dev_
 */
 
 __global__
-void _rasterize(int numTriIndices, Primitive* dev_primitives, Fragment* fragmentBuffer, int width, int* dev_depth)
+void _rasterize(int numTriIndices, Primitive* dev_primitives, Fragment* fragmentBuffer, int width, int height, int* dev_depth, int* dev_mutex)
 {
 	int idx = (blockIdx.x * blockDim.x) + threadIdx.x;
 
 	if (idx < numTriIndices)
 	{
-		//Interpolate values of triangle's 3 vertices
 		Primitive currPrim = dev_primitives[idx];
 
 		glm::vec3 triEyePos[3];
@@ -844,86 +962,199 @@ void _rasterize(int numTriIndices, Primitive* dev_primitives, Fragment* fragment
 		triPos[2] = glm::vec3(currPrim.v[2].pos);
 		AABB triAABB = getAABBForTriangle(triPos);
 
-		for (int x = triAABB.min.x; x <= triAABB.max.x; x++)
+		if (DRAW_POINTS)
 		{
-			for (int y = triAABB.min.y; y <= triAABB.max.y; y++)
+			for (int i = 0; i < 3; i++)
 			{
-				glm::vec3 baryCoord = calculateBarycentricCoordinate(triPos, glm::vec2(x, y));
-				bool isBaryCoordInTri = isBarycentricCoordInBounds(baryCoord);
-				if (isBaryCoordInTri)
+				int x = triPos[i].x;
+				int y = triPos[i].y;
+				int fragIdx = x + (y * width);
+				fragmentBuffer[fragIdx].color = currPrim.v[0].col;	//all 3 verts are set to arbitrary color from vert shader
+			}
+		}//end render points
+
+		else if (DRAW_LINES)
+		{
+			//Draw lines between the 3 vertices of triangle 
+			_rasterizeLines(fragmentBuffer, width, height, triPos[0], triPos[1], currPrim.v[0].col);
+			_rasterizeLines(fragmentBuffer, width, height, triPos[1], triPos[2], currPrim.v[0].col);
+			_rasterizeLines(fragmentBuffer, width, height, triPos[2], triPos[0], currPrim.v[0].col);
+
+		}//end render lines
+
+		else
+		{
+			//int clampedWidthMin = glm::clamp((int)triAABB.min.x, 0, (int)triAABB.min.x);
+			//int clampedWidthMax = glm::clamp((int)triAABB.max.x, (int)triAABB.max.x, width);
+			//int clampedHeightMin = glm::clamp((int)triAABB.min.y, 0, (int)triAABB.min.y);
+			//int clampedHeightMax = glm::clamp((int)triAABB.max.y, (int)triAABB.max.y, height);
+
+			for (int x = triAABB.min.x; x <= triAABB.max.x; x++)	//for (int x = clampedWidthMin; x <= clampedWidthMax; x++)
+			{
+				for (int y = triAABB.min.y; y <= triAABB.max.y; y++)	//for (int y = clampedHeightMin; y <= clampedHeightMax; y++)
 				{
-					int fragIdx = x + (y * width);
-
-					// Calculating color according to depth buffer
-					float depthVal = getZAtCoordinate(baryCoord, triPos);
-					int scale = 10000;
-					int scaledDepth = scale * depthVal;
-
-
-					// SHOULD TRY AND USE MUTEXES HERE INSTEAD
-
-					atomicMin(&dev_depth[fragIdx], scaledDepth);
-					if (scaledDepth == dev_depth[fragIdx])
+					glm::vec3 baryCoord = calculateBarycentricCoordinate(triPos, glm::vec2(x, y));
+					bool isBaryCoordInTri = isBarycentricCoordInBounds(baryCoord);
+					if (isBaryCoordInTri)
 					{
-						if (DEPTH_TEST)
+						int fragIdx = x + (y * width);
+
+						if (USING_MUTEX)
 						{
-							glm::vec3 newColor(dev_depth[fragIdx] / (float)scale);
-							fragmentBuffer[fragIdx].color = newColor;
-						}
+							bool isSet = false;
+							do
+							{
+								isSet = (atomicCAS(&dev_mutex[fragIdx], 0, 1) == 0);
 
-						else if (LAMBERT_SHADING)
-						{
-							glm::vec3 interpolatedEyePos(baryCoord.x * triEyePos[0] + baryCoord.y * triEyePos[1] + baryCoord.z * triEyePos[2]);
-							glm::vec3 interpolatedEyeNor(baryCoord.x * triEyeNor[0] + baryCoord.y * triEyeNor[1] + baryCoord.z * triEyeNor[2]);
-							glm::vec3 interpolatedFragColor(baryCoord.x * triFragCol[0] + baryCoord.y * triFragCol[1] + baryCoord.z * triFragCol[2]);
+								if (isSet)
+								{
+									// ========================= PUT CODE IN MUTEX CHECK ===============================
 
-							fragmentBuffer[fragIdx].eyePos = interpolatedEyePos;
-							fragmentBuffer[fragIdx].eyeNor = interpolatedEyeNor;
-							fragmentBuffer[fragIdx].color = interpolatedFragColor;
-						}
+									// Calculating color according to depth buffer
+									float depthVal = getZAtCoordinate(baryCoord, triPos);
+									int scale = 10000;	// Is this a good enough number?
+									int scaledDepth = scale * depthVal;
 
-						else if (NORMAL_TEST)
-						{
-							glm::vec3 interpolatedEyePos(baryCoord.x * triEyePos[0] + baryCoord.y * triEyePos[1] + baryCoord.z * triEyePos[2]);
-							glm::vec3 interpolatedEyeNor(baryCoord.x * triEyeNor[0] + baryCoord.y * triEyeNor[1] + baryCoord.z * triEyeNor[2]);
+									//atomicMin(&dev_depth[fragIdx], scaledDepth);
 
-							fragmentBuffer[fragIdx].eyePos = interpolatedEyePos;
-							fragmentBuffer[fragIdx].eyeNor = interpolatedEyeNor;
-						}
+									if (scaledDepth < dev_depth[fragIdx])
+									{
+										dev_depth[fragIdx] = scaledDepth;
+
+										if (DEPTH_TEST)
+										{
+											glm::vec3 newColor(dev_depth[fragIdx] / (float)scale);
+											fragmentBuffer[fragIdx].color = newColor;
+										}
+
+										else if (LAMBERT_SHADING)
+										{
+											glm::vec3 interpolatedEyePos(baryCoord.x * triEyePos[0] + baryCoord.y * triEyePos[1] + baryCoord.z * triEyePos[2]);
+											glm::vec3 interpolatedEyeNor(baryCoord.x * triEyeNor[0] + baryCoord.y * triEyeNor[1] + baryCoord.z * triEyeNor[2]);
+											glm::vec3 interpolatedFragColor(baryCoord.x * triFragCol[0] + baryCoord.y * triFragCol[1] + baryCoord.z * triFragCol[2]);
+
+											fragmentBuffer[fragIdx].eyePos = interpolatedEyePos;
+											fragmentBuffer[fragIdx].eyeNor = interpolatedEyeNor;
+											fragmentBuffer[fragIdx].color = interpolatedFragColor;
+										}
+
+										else if (NORMAL_TEST)
+										{
+											glm::vec3 interpolatedEyePos(baryCoord.x * triEyePos[0] + baryCoord.y * triEyePos[1] + baryCoord.z * triEyePos[2]);
+											glm::vec3 interpolatedEyeNor(baryCoord.x * triEyeNor[0] + baryCoord.y * triEyeNor[1] + baryCoord.z * triEyeNor[2]);
+
+											fragmentBuffer[fragIdx].eyePos = interpolatedEyePos;
+											fragmentBuffer[fragIdx].eyeNor = interpolatedEyeNor;
+										}
+
+										else
+										{
+											glm::vec3 interpolatedFragColor(baryCoord.x * triFragCol[0] + baryCoord.y * triFragCol[1] + baryCoord.z * triFragCol[2]);
+											fragmentBuffer[fragIdx].color = interpolatedFragColor;
+										}
+
+										// Texture Mapping with perspective correct coordinates
+										//https://www.scratchapixel.com/lessons/3d-basic-rendering/rasterization-practical-implementation/perspective-correct-interpolation-vertex-attributes
+										glm::vec3 perspCorrectBaryCoord(baryCoord.x / triEyePos[0].z,
+											baryCoord.y / triEyePos[1].z,
+											baryCoord.z / triEyePos[2].z);
+
+										float uFactor = perspCorrectBaryCoord.x * triTexCoord[0].x +
+											perspCorrectBaryCoord.y * triTexCoord[1].x +
+											perspCorrectBaryCoord.z * triTexCoord[2].x;
+
+										float vFactor = perspCorrectBaryCoord.x * triTexCoord[0].y +
+											perspCorrectBaryCoord.y * triTexCoord[1].y +
+											perspCorrectBaryCoord.z * triTexCoord[2].y;
+
+										float z = 1.0f / (perspCorrectBaryCoord.x + perspCorrectBaryCoord.y + perspCorrectBaryCoord.z);
+
+										fragmentBuffer[fragIdx].texcoord0 = glm::vec2(uFactor * z, vFactor * z);
+
+										// These should be the same regardless of which prim's vertex
+										fragmentBuffer[fragIdx].dev_diffuseTex = currPrim.v[0].dev_diffuseTex;
+										fragmentBuffer[fragIdx].diffuseTexWidth = currPrim.v[0].texWidth;
+										fragmentBuffer[fragIdx].diffuseTexHeight = currPrim.v[0].texHeight;
+
+									}//if depths are equal
+									 // ========================= PUT CODE IN MUTEX CHECK ===============================
+								}//end if isSet
+
+								if (isSet)	dev_mutex[fragIdx] = 0;
+
+							} while (!isSet);
+						} //end if using mutex
 
 						else
 						{
-							glm::vec3 interpolatedFragColor(baryCoord.x * triFragCol[0] + baryCoord.y * triFragCol[1] + baryCoord.z * triFragCol[2]);
-							fragmentBuffer[fragIdx].color = interpolatedFragColor;
-						}
+							// Calculating color according to depth buffer
+							float depthVal = getZAtCoordinate(baryCoord, triPos);
+							int scale = 10000;	// Is this a good enough number?
+							int scaledDepth = scale * depthVal;
 
-						// Texture Mapping
-						// Perspective Correct Bary Coord
-						glm::vec3 perspCorrectBaryCoord(baryCoord.x / triEyePos[0].z, 
-														baryCoord.y / triEyePos[1].z, 
-														baryCoord.z / triEyePos[2].z);
+							atomicMin(&dev_depth[fragIdx], scaledDepth);
+							if (scaledDepth == dev_depth[fragIdx])
+							{
+								if (DEPTH_TEST)
+								{
+									glm::vec3 newColor(dev_depth[fragIdx] / (float)scale);
+									fragmentBuffer[fragIdx].color = newColor;
+								}
 
-						float uFactor = perspCorrectBaryCoord.x * triTexCoord[0].x +
-										perspCorrectBaryCoord.y * triTexCoord[1].x +
-										perspCorrectBaryCoord.z * triTexCoord[2].x;
+								else if (LAMBERT_SHADING)
+								{
+									glm::vec3 interpolatedEyePos(baryCoord.x * triEyePos[0] + baryCoord.y * triEyePos[1] + baryCoord.z * triEyePos[2]);
+									glm::vec3 interpolatedEyeNor(baryCoord.x * triEyeNor[0] + baryCoord.y * triEyeNor[1] + baryCoord.z * triEyeNor[2]);
+									glm::vec3 interpolatedFragColor(baryCoord.x * triFragCol[0] + baryCoord.y * triFragCol[1] + baryCoord.z * triFragCol[2]);
 
-						float vFactor = perspCorrectBaryCoord.x * triTexCoord[0].y +
-										perspCorrectBaryCoord.y * triTexCoord[1].y +
-										perspCorrectBaryCoord.z * triTexCoord[2].y;
+									fragmentBuffer[fragIdx].eyePos = interpolatedEyePos;
+									fragmentBuffer[fragIdx].eyeNor = interpolatedEyeNor;
+									fragmentBuffer[fragIdx].color = interpolatedFragColor;
+								}
 
-						float z = 1.0f / (perspCorrectBaryCoord.x + perspCorrectBaryCoord.y + perspCorrectBaryCoord.z);
-						
-						fragmentBuffer[fragIdx].texcoord0 = glm::vec2(uFactor * z, vFactor * z);
+								else if (NORMAL_TEST)
+								{
+									glm::vec3 interpolatedEyePos(baryCoord.x * triEyePos[0] + baryCoord.y * triEyePos[1] + baryCoord.z * triEyePos[2]);
+									glm::vec3 interpolatedEyeNor(baryCoord.x * triEyeNor[0] + baryCoord.y * triEyeNor[1] + baryCoord.z * triEyeNor[2]);
 
-						// These should be the same regardless of which prim's vertex
-						fragmentBuffer[fragIdx].dev_diffuseTex = currPrim.v[0].dev_diffuseTex;
-						fragmentBuffer[fragIdx].diffuseTexWidth = currPrim.v[0].texWidth;
-						fragmentBuffer[fragIdx].diffuseTexHeight = currPrim.v[0].texHeight;
+									fragmentBuffer[fragIdx].eyePos = interpolatedEyePos;
+									fragmentBuffer[fragIdx].eyeNor = interpolatedEyeNor;
+								}
 
-					}//if depths are equal
-				}//end if baryInBounds
-			}//end for y
-		}//end for x
+								else
+								{
+									glm::vec3 interpolatedFragColor(baryCoord.x * triFragCol[0] + baryCoord.y * triFragCol[1] + baryCoord.z * triFragCol[2]);
+									fragmentBuffer[fragIdx].color = interpolatedFragColor;
+								}
+
+								// Texture Mapping with perspective correct coordinates
+								glm::vec3 perspCorrectBaryCoord(baryCoord.x / triEyePos[0].z,
+									baryCoord.y / triEyePos[1].z,
+									baryCoord.z / triEyePos[2].z);
+
+								float uFactor = perspCorrectBaryCoord.x * triTexCoord[0].x +
+									perspCorrectBaryCoord.y * triTexCoord[1].x +
+									perspCorrectBaryCoord.z * triTexCoord[2].x;
+
+								float vFactor = perspCorrectBaryCoord.x * triTexCoord[0].y +
+									perspCorrectBaryCoord.y * triTexCoord[1].y +
+									perspCorrectBaryCoord.z * triTexCoord[2].y;
+
+								float z = 1.0f / (perspCorrectBaryCoord.x + perspCorrectBaryCoord.y + perspCorrectBaryCoord.z);
+
+								fragmentBuffer[fragIdx].texcoord0 = glm::vec2(uFactor * z, vFactor * z);
+
+								// These should be the same regardless of which prim's vertex
+								fragmentBuffer[fragIdx].dev_diffuseTex = currPrim.v[0].dev_diffuseTex;
+								fragmentBuffer[fragIdx].diffuseTexWidth = currPrim.v[0].texWidth;
+								fragmentBuffer[fragIdx].diffuseTexHeight = currPrim.v[0].texHeight;
+							}//if depths are equal
+						}//end else not using mutex
+					}//end if baryInBounds
+				}//end for y
+			}//end for x
+		}//end render triangles
+		
 	}//end if idx
 }//end _rasterize
 
@@ -990,7 +1221,13 @@ void rasterize(uchar4 *pbo, const glm::mat4 & MVP, const glm::mat4 & MV, const g
 	// TODO: rasterize
 	dim3 primitive_numThreadsPerBlock(128);
 	dim3 numBlocksForPrimitives((totalNumPrimitives + primitive_numThreadsPerBlock.x - 1) / primitive_numThreadsPerBlock.x);
-	_rasterize <<<numBlocksForPrimitives, primitive_numThreadsPerBlock>>> (totalNumPrimitives, dev_primitives, dev_fragmentBuffer, width, dev_depth);
+	_rasterize <<<numBlocksForPrimitives, primitive_numThreadsPerBlock>>> (totalNumPrimitives, 
+																			dev_primitives, 
+																			dev_fragmentBuffer, 
+																			width, 
+																			height,
+																			dev_depth,
+																			dev_mutex);
 	checkCUDAError("_rasterize");
 
 
@@ -1040,6 +1277,9 @@ void rasterizeFree() {
 
 	cudaFree(dev_depth);
 	dev_depth = NULL;
+
+	cudaFree(dev_mutex);
+	dev_mutex = NULL;
 
     checkCUDAError("rasterize Free");
 }
