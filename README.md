@@ -58,23 +58,23 @@ Each pixel can contain multiple fragments. In a rasterizer, one must only render
 ## Renders
 
 ### Texture Mapping 
-![](renders\FinalRenders\cesiummilktruck_textured.PNG)
+![](renders/FinalRenders/cesiummilktruck_textured.PNG)
 ###### (Cesium Milk Truck)
 
-![](renders\FinalRenders\duck.PNG)
+![](renders/FinalRenders/duck.PNG)
 ###### (Duck)
 
 ### Rendering with points
-![](renders\FinalRenders\cesiummilktruck_points.PNG)
+![](renders/FinalRenders/cesiummilktruck_points.PNG)
 
 ### Rendering with lines
-![](renders\FinalRenders\rasterizeLines_box.PNG)
+![](renders/FinalRenders/rasterizeLines_box.PNG)
 
 ### Depth Buffer Test
-![](renders\FinalRenders\box_depthtest.PNG)
+![](renders/FinalRenders/box_depthtest.PNG)
 
 ### Normal Test
-![](renders\FinalRenders\normals_flower.PNG)
+![](renders/FinalRenders/normals_flower.PNG)
 
 
 
