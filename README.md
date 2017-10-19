@@ -12,9 +12,9 @@ CUDA Rasterizer
 The goal of this project was to get an introduction to writing a GPU Rasterizer in CUDA. The pipeline being used is similar to that of OpenGL, where the following are implemented: vertex shading, primitive assembly, rasterization, fragment shading, and a framebuffer. 
 
 
-![](renders/FinalRenders/normals_cow.PNG)
+![](renders/FinalRenders/normals_cow.gif)
 
-![](renders/FinalRenders/truck.PNG)
+![](renders/FinalRenders/truck.gif)
 
 
 [Click here for instructions of this project](./INSTRUCTION.md)
