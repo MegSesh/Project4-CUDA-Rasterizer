@@ -110,15 +110,8 @@ Approach 2 is the safer of the two approaches. By allocating a device int array 
 
 ## Performance Analysis
 
-
-IMPORTANT: For each extra feature, please provide the following brief analysis:
-Concise overview write-up of the feature.
-Performance impact of adding the feature (slower or faster).
-where is the performance hit?
-where is the performance improvement?
-If you did something to accelerate the feature, what did you do and why?
-How might this feature be optimized beyond your current implementation?
-
+The following tests were all to compare the different steps of the rasterization pipeline and were done by taking an average of times over 10 iterations of each step.
+ 
 
 ### Performance Across Pipeline
 ![](renders/FinalRenders/modeltestingpipeline.PNG)
@@ -171,7 +164,7 @@ This probably occurs because the box is such a low poly count model, hence, the 
 
 #### Note
 
-Something that I noticed was that as I zoomed in to the object in the window, then the program would run much more slowly and sometimes even freeze. I believe this may be occurring because the rasterizer is trying to access triangles that have some vertices that are not visible in the window. Hence, the loop through a triangle's bounding box would take much longer because it's trying to access triangle vertices that don't exist on the screen.
+Something that I noticed was that as I zoomed in to the object in the window, then the program would run much more slowly and sometimes even freeze. I believe this may be occurring because the rasterizer is trying to access triangles that have some vertices that are not visible in the window. Hence, the loop through a triangle's bounding box would take much longer because it's trying to access triangle vertices that don't exist on the screen. The optimization/fix here would probably be to clamp the min and max coordinates of the bounding box to be within the screen width and height.
 
 ## Resources 
 
