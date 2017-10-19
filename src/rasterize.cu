@@ -1288,11 +1288,11 @@ void rasterize(uchar4 *pbo, const glm::mat4 & MVP, const glm::mat4 & MV, const g
 	//printCPUTimer();
 
 	// ================================== Copy depthbuffer colors into framebuffer ==================================
-	startCpuTimer();
+	//startCpuTimer();
 	render <<<blockCount2d, blockSize2d >>>(width, height, dev_fragmentBuffer, dev_framebuffer);
 	checkCUDAError("fragment shader");
-	endCpuTimer();
-	printCPUTimer();
+	//endCpuTimer();
+	//printCPUTimer();
 
 	// ================================== Copy framebuffer into OpenGL buffer for OpenGL previewing ==================================
     sendImageToPBO<<<blockCount2d, blockSize2d>>>(pbo, width, height, dev_framebuffer);

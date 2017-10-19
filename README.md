@@ -98,6 +98,8 @@ Approach 2 is the safer of the two approaches. By allocating a device int array 
 ### Rendering with lines
 ![](renders/FinalRenders/rasterizeLines_box.PNG)
 
+![](renders/FinalRenders/cow_lines.PNG)
+
 ### Depth Buffer Test
 ![](renders/FinalRenders/box_depthtest.PNG)
 
@@ -121,6 +123,7 @@ How might this feature be optimized beyond your current implementation?
 ### Performance Across Pipeline
 ![](renders/FinalRenders/modeltestingpipeline.PNG)
 
+According to the chart, the vertex and primitive assembly is clearly the stage that takes up the most time, as compared to the rasterization step and fragment shader, no matter what poly count of the model. Why is this the case? The vertex assembly is completing a series of incoherent memory allocations to and from global memory for each primitive by allocating vertices for each triangle, and other attribute data such as positions, normals, texture data, and transformations. 
 
 
 ### Feature Analysis 
@@ -132,20 +135,27 @@ How might this feature be optimized beyond your current implementation?
 
 ![](renders/FinalRenders/notexturing_cow_chart.PNG)
 
+Regardless of texturing or not, the vertex shading and primitive assembly stage of the rasterization pipeline takes up the most time as compared to the other stages.
 
 
 #### Support for rasterizing points, lines, and triangles
 
 **Points**
+
 ![](renders/FinalRenders/renderingpoints_box_chart.PNG)
 
 ![](renders/FinalRenders/renderingpoints_cow_chart.PNG)
 
+Regardless of rendering points with high poly count models or low poly count models, the vertex shading and primitive assembly stage of the rasterization pipeline takes up the most time as compared to the other stages.
+
 
 **Lines**
+
 ![](renders/FinalRenders/renderinglines_box_chart.PNG)
 
 ![](renders/FinalRenders/renderinglines_cow_chart.PNG)
+
+Regardless of rendering lines with high poly count models or low poly count models, the vertex shading and primitive assembly stage of the rasterization pipeline takes up the most time as compared to the other stages.
 
 
 ### Mutex Test
@@ -153,8 +163,15 @@ How might this feature be optimized beyond your current implementation?
 
 ![](renders/FinalRenders/mutextest_zoomed.PNG)
 
+Regardless of rendering with the mutex utilized for depth buffer testing, the vertex shading and primitive assembly stage of the rasterization pipeline takes up the most time as compared to the other stages. What's interesting to note here is that, the box takes a lot longer to render than the flower, regardless of with the mutex or not, and regardless of whether you zoom into the model or not.
 
+![](renders/FinalRenders/mutextest_numbers.PNG)
 
+This probably occurs because the box is such a low poly count model, hence, the overhead in setting up the device arrays and completing the various kernels for the rasterization pipeline is higher.
+
+#### Note
+
+Something that I noticed was that as I zoomed in to the object in the window, then the program would run much more slowly and sometimes even freeze. I believe this may be occurring because the rasterizer is trying to access triangles that have some vertices that are not visible in the window. Hence, the loop through a triangle's bounding box would take much longer because it's trying to access triangle vertices that don't exist on the screen.
 
 ## Resources 
 
