@@ -31,7 +31,7 @@
 #define BILINEAR			true
 #define USING_MUTEX			true
 #define DRAW_POINTS			false
-#define DRAW_LINES			false
+#define DRAW_LINES			true
 
 namespace {
 

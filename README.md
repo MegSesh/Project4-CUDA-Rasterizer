@@ -11,6 +11,12 @@ CUDA Rasterizer
 
 The goal of this project was to get an introduction to writing a GPU Rasterizer in CUDA. The pipeline being used is similar to that of OpenGL, where the following are implemented: vertex shading, primitive assembly, rasterization, fragment shading, and a framebuffer. 
 
+
+![](renders/FinalRenders/normals_cow.PNG)
+
+![](renders/FinalRenders/truck.PNG)
+
+
 [Click here for instructions of this project](./INSTRUCTION.md)
 
 ### Features
@@ -111,7 +117,7 @@ Approach 2 is the safer of the two approaches. By allocating a device int array 
 ## Performance Analysis
 
 The following tests were all to compare the different steps of the rasterization pipeline and were done by taking an average of times over 10 iterations of each step.
- 
+
 
 ### Performance Across Pipeline
 ![](renders/FinalRenders/modeltestingpipeline.PNG)
